@@ -170,6 +170,18 @@ daemon_lifecycle_consumer = """
   OR moniker ~ '**/dir:vscode-extension/dir:src/module:daemon/module:session/**'
 """
 
+# Named wire contracts emitted by the daemon schema. ViewReadResult inlines its
+# List/Detail payloads in TypeScript, so those two Rust-only helper names are
+# deliberately outside this name-preserving correspondence.
+# WorkspaceLifecycle is an internal helper outside the exported schema roots.
+query_api_parity_name = "name =~ (Dto|Result)$ AND name !~ ^View(List|Detail)Result$ OR name =~ ^(Query|Command|QueryRequest|QueryResponse|CommandRequest|CommandResponse|HandshakeResponse|QueryError|QueryCursor|WorkspaceStatus|WorkspacePhase|WorkspaceGeneration|CapabilitySet|DaemonWorkspaceConfig|DaemonRegistryEntry|BuildIdentity)$"
+query_api_parity_type = "shape = 'type' AND visibility = 'public' AND uri ~ '**/dir:crates/dir:query/dir:src/module:/^(lib|discovery)$/*' AND $query_api_parity_name"
+sdk_api_parity_type = "shape = 'type' AND visibility = 'public' AND uri ~ '**/dir:packages/dir:client/dir:src/module:generated/*' AND $query_api_parity_name"
+query_api_parity_rpc = "kind = 'method' AND uri ~ '**/dir:crates/dir:query/dir:src/module:lib/module:rpc/trait:DaemonRpc/*'"
+daemon_api_parity_client = "kind = 'method' AND visibility = 'public' AND uri ~ '**/dir:crates/dir:daemon-client/dir:src/module:lib/struct:DaemonConnection/*'"
+sdk_api_parity_rpc = "kind = 'method' AND visibility = 'public' AND uri ~ '**/dir:packages/dir:client/dir:src/module:rpc/class:DaemonRpc/*'"
+sdk_api_parity_client = "kind = 'method' AND visibility = 'public' AND uri ~ '**/dir:packages/dir:client/dir:src/module:client/class:CodeMonikerClient/*'"
+
 [exclude]
 uris = [
   "**/crates/core/tests/fixtures/**",
@@ -219,6 +231,145 @@ enable = [
 	"mcp-composition-root-declares-agent-output-contract$",
 	"mcp-and-presentation@mcp-ownership-reserves-plain-output-for-refresh$",
 ]
+
+# Targeted structural API correspondence checks. Run from the workspace root:
+# code-moniker check . --profile api-parity --report
+[profiles.api-parity]
+enable = ["api-parity"]
+
+# These rules compare extracted declaration names, not signatures, fields,
+# serde tags, optionality, transport behavior, or convenience-method coverage.
+# A name absent on every side creates no group. Always inspect report coverage.
+# Per-source uniqueness prevents duplicates on one side hiding a missing peer.
+
+[[workspace.group.where]]
+id        = "query-and-sdk-ownership-api-parity"
+severity  = "error"
+members   = "$query_api_parity_type OR $sdk_api_parity_type"
+group_by  = ["name"]
+expr      = "count(member) = 2"
+message   = "API declaration counterpart missing or duplicated: {group}; {members}"
+rationale = "Named DTO/result and selected envelope contracts must retain one declaration in query and one in the generated Node schema. Inline ViewReadResult payload names are excluded because generation intentionally erases them."
+
+[[workspace.group.where]]
+id        = "query-and-sdk-hygiene-api-parity-unique-per-language"
+severity  = "error"
+members   = "$query_api_parity_type OR $sdk_api_parity_type"
+group_by  = ["lang", "name"]
+expr      = "count(member) = 1"
+message   = "API type duplicated on one language side: {group}; {members}"
+rationale = "Each selected type name must occur once per language, including across the Rust lib and discovery modules. Two Rust declarations cannot replace the missing generated TypeScript declaration, or conversely."
+
+# Workspace group names include method parameters. Select each attested
+# operation explicitly; never equate Rust and TypeScript signature strings.
+
+[[workspace.group.where]]
+id        = "query-and-daemon-and-sdk-ownership-api-parity-handshake-declarations"
+severity  = "error"
+members   = "($query_api_parity_rpc OR $daemon_api_parity_client OR $sdk_api_parity_rpc) AND name =~ '^handshake[(]'"
+group_by  = ["source.root"]
+expr      = "count(member) = 3"
+message   = "RPC handshake requires one declaration per Rust contract, Rust client and Node RPC source: {group}; {members}"
+rationale = "The same-named unary RPC operation is declared on these three owners. Paired total and per-source counts detect missing peers and overloads; parameter and return types remain outside this invariant."
+
+[[workspace.group.where]]
+id        = "query-and-daemon-and-sdk-hygiene-api-parity-handshake-unique-per-source"
+severity  = "error"
+members   = "($query_api_parity_rpc OR $daemon_api_parity_client OR $sdk_api_parity_rpc) AND name =~ '^handshake[(]'"
+group_by  = ["source.path"]
+expr      = "count(member) = 1"
+message   = "RPC handshake requires one declaration per Rust contract, Rust client and Node RPC source: {group}; {members}"
+rationale = "The same-named unary RPC operation is declared on these three owners. Paired total and per-source counts detect missing peers and overloads; parameter and return types remain outside this invariant."
+
+[[workspace.group.where]]
+id        = "query-and-daemon-and-sdk-ownership-api-parity-query-declarations"
+severity  = "error"
+members   = "($query_api_parity_rpc OR $daemon_api_parity_client OR $sdk_api_parity_rpc) AND name =~ '^query[(]'"
+group_by  = ["source.root"]
+expr      = "count(member) = 3"
+message   = "RPC query requires one declaration per Rust contract, Rust client and Node RPC source: {group}; {members}"
+rationale = "The same-named unary RPC operation is declared on these three owners. Paired total and per-source counts detect missing peers and overloads; parameter and return types remain outside this invariant."
+
+[[workspace.group.where]]
+id        = "query-and-daemon-and-sdk-hygiene-api-parity-query-unique-per-source"
+severity  = "error"
+members   = "($query_api_parity_rpc OR $daemon_api_parity_client OR $sdk_api_parity_rpc) AND name =~ '^query[(]'"
+group_by  = ["source.path"]
+expr      = "count(member) = 1"
+message   = "RPC query requires one declaration per Rust contract, Rust client and Node RPC source: {group}; {members}"
+rationale = "The same-named unary RPC operation is declared on these three owners. Paired total and per-source counts detect missing peers and overloads; parameter and return types remain outside this invariant."
+
+[[workspace.group.where]]
+id        = "query-and-daemon-and-sdk-ownership-api-parity-command-declarations"
+severity  = "error"
+members   = "($query_api_parity_rpc OR $daemon_api_parity_client OR $sdk_api_parity_rpc) AND name =~ '^command[(]'"
+group_by  = ["source.root"]
+expr      = "count(member) = 3"
+message   = "RPC command requires one declaration per Rust contract, Rust client and Node RPC source: {group}; {members}"
+rationale = "The same-named unary RPC operation is declared on these three owners. Paired total and per-source counts detect missing peers and overloads; parameter and return types remain outside this invariant."
+
+[[workspace.group.where]]
+id        = "query-and-daemon-and-sdk-hygiene-api-parity-command-unique-per-source"
+severity  = "error"
+members   = "($query_api_parity_rpc OR $daemon_api_parity_client OR $sdk_api_parity_rpc) AND name =~ '^command[(]'"
+group_by  = ["source.path"]
+expr      = "count(member) = 1"
+message   = "RPC command requires one declaration per Rust contract, Rust client and Node RPC source: {group}; {members}"
+rationale = "The same-named unary RPC operation is declared on these three owners. Paired total and per-source counts detect missing peers and overloads; parameter and return types remain outside this invariant."
+
+[[workspace.group.where]]
+id        = "query-and-daemon-and-sdk-ownership-api-parity-shutdown-declarations"
+severity  = "error"
+members   = "($query_api_parity_rpc OR $daemon_api_parity_client OR $sdk_api_parity_rpc) AND name =~ '^shutdown[(]'"
+group_by  = ["source.root"]
+expr      = "count(member) = 3"
+message   = "RPC shutdown requires one declaration per Rust contract, Rust client and Node RPC source: {group}; {members}"
+rationale = "The same-named unary RPC operation is declared on these three owners. Paired total and per-source counts detect missing peers and overloads; parameter and return types remain outside this invariant."
+
+[[workspace.group.where]]
+id        = "query-and-daemon-and-sdk-hygiene-api-parity-shutdown-unique-per-source"
+severity  = "error"
+members   = "($query_api_parity_rpc OR $daemon_api_parity_client OR $sdk_api_parity_rpc) AND name =~ '^shutdown[(]'"
+group_by  = ["source.path"]
+expr      = "count(member) = 1"
+message   = "RPC shutdown requires one declaration per Rust contract, Rust client and Node RPC source: {group}; {members}"
+rationale = "The same-named unary RPC operation is declared on these three owners. Paired total and per-source counts detect missing peers and overloads; parameter and return types remain outside this invariant."
+
+[[workspace.group.where]]
+id        = "query-and-sdk-ownership-api-parity-public-query"
+severity  = "error"
+members   = "($query_api_parity_rpc OR $sdk_api_parity_client) AND name =~ '^query[(]'"
+group_by  = ["source.root"]
+expr      = "count(member) = 2"
+message   = "Generic client query requires its RPC contract and Node public entry point: {group}; {members}"
+rationale = "CodeMonikerClient exposes the generic operation declared by the RPC contract. This asserts declaration presence, not identical request or response wrappers."
+
+[[workspace.group.where]]
+id        = "query-and-sdk-hygiene-api-parity-public-query-unique-per-source"
+severity  = "error"
+members   = "($query_api_parity_rpc OR $sdk_api_parity_client) AND name =~ '^query[(]'"
+group_by  = ["source.path"]
+expr      = "count(member) = 1"
+message   = "Generic client query must be unique per API source: {group}; {members}"
+rationale = "An overload or duplicate on one owner must not compensate for a missing declaration on the other owner."
+
+[[workspace.group.where]]
+id        = "query-and-sdk-ownership-api-parity-public-command"
+severity  = "error"
+members   = "($query_api_parity_rpc OR $sdk_api_parity_client) AND name =~ '^command[(]'"
+group_by  = ["source.root"]
+expr      = "count(member) = 2"
+message   = "Generic client command requires its RPC contract and Node public entry point: {group}; {members}"
+rationale = "CodeMonikerClient exposes the generic operation declared by the RPC contract. This asserts declaration presence, not identical request or response wrappers."
+
+[[workspace.group.where]]
+id        = "query-and-sdk-hygiene-api-parity-public-command-unique-per-source"
+severity  = "error"
+members   = "($query_api_parity_rpc OR $sdk_api_parity_client) AND name =~ '^command[(]'"
+group_by  = ["source.path"]
+expr      = "count(member) = 1"
+message   = "Generic client command must be unique per API source: {group}; {members}"
+rationale = "An overload or duplicate on one owner must not compensate for a missing declaration on the other owner."
 
 # ─── Agent output boundary ──────────────────────────────────────────────
 
